@@ -1,48 +1,118 @@
-//define extent
-var geometry = 
-    /* color: #d63000 */
-    /* shown: false */
-    /* displayProperties: [
-      {
-        "type": "rectangle"
-      }
-    ] */
-    ee.Geometry.Polygon(
-        [[[12.928338010640598, 55.56069707955899],
-          [12.928338010640598, 48.086585414235735],
-          [26.287713010640598, 48.086585414235735],
-          [26.287713010640598, 55.56069707955899]]], null, false);
-          
+//upload plugin dedicated to download many images
+var batch = require('users/fitoprincipe/geetools:batch')
+
 var startDate = ee.Date('2021-03-01') //start date
 var endDate = ee.Date('2021-03-11') //end date (+1 day)
 
 //define collection
-var dataset = ee.ImageCollection("ECMWF/ERA5_LAND/HOURLY") //define dataset
-                .filter(ee.Filter.date(startDate, endDate)) //filter by date
-                .select("total_precipitation_hourly") //define band/variable
-                //converse m to mm
-                .map(function (image) {
-  return image.multiply(1000)
+var d07_2021 = ee.ImageCollection('ECMWF/ERA5_LAND/HOURLY') //define dataset
+                   .select('temperature_2m') //define band/variable 
+                   .filter(ee.Filter.date(startDate, endDate)) //filter by date
+                   
+
+print(d07_2021, 'collection input')
+
+var numberOfDays = endDate.difference(startDate, 'days'); //number of days to calculate mean
+
+//calculate max temp for each day within the period
+var daily_max_d07_2021 = ee.ImageCollection(
+  ee.List.sequence(0, numberOfDays.subtract(1))
+    .map(function (dayOffset) {
+      var start = startDate.advance(dayOffset, 'days');
+      var end = start.advance(1, 'days');
+      return d07_2021
+        .filterDate(startDate, endDate)
+        .max()
+        .set('system:time_start', start.millis());
+    })
+);
+
+//converse K to C
+var daily_max_d07_2021 = daily_max_d07_2021.map(function (image) {
+  return image.subtract(273.15)
+})  
+
+//calculate min temp for each day within the period
+var daily_min_d07_2021 = ee.ImageCollection(
+  ee.List.sequence(0, numberOfDays.subtract(1))
+    .map(function (dayOffset) {
+      var start = startDate.advance(dayOffset, 'days');
+      var end = start.advance(1, 'days');
+      return d07_2021
+        .filterDate(startDate, endDate)
+        .min()
+        .set('system:time_start', start.millis());
+    })
+);
+
+//converse K to C
+var daily_min_d07_2021 = daily_min_d07_2021.map(function (image) {
+  return image.subtract(273.15)
+}) 
+
+print(daily_max_d07_2021, "daily MAX")
+print(daily_min_d07_2021, "daily MIN")
+
+//define what will be on the left and right within the output - first and second band
+var filter = ee.Filter.equals({
+  leftField: 'system:index', //first band in output - 0
+  rightField: 'system:index' //second band in output - 1
+});
+
+//create the join
+var simpleJoin = ee.Join.inner();
+
+//inner join
+var innerJoin = ee.ImageCollection(simpleJoin.apply(
+  daily_max_d07_2021, daily_min_d07_2021, filter))
+
+var daily_d07_2021 = innerJoin.map(function(feature) {
+  return ee.Image.cat(feature.get('primary'), feature.get('secondary'));
 })
-                  
-//10 day sum
-var tp_2000_07 = dataset.sum(); 
+
+//rename bands to max and min
+var daily_d07_2021 = daily_d07_2021.select(['temperature_2m', 'temperature_2m_1'],['max', 'min'])
+//look up for results
+print(daily_d07_2021, "T DAILY")
+
+//calculate mean for each day within the 10 day period
+var temp_d07_2021 = daily_d07_2021.map(function (image){
+  return image.select('max').add(image.select('min'))})
+var t_d07_2021 = temp_d07_2021.map(function (image){
+  return image.divide(2)})
+
+//rename band to mean
+var t_d07_2021 = t_d07_2021.select(['max'],['mean'])
+//look up for results
+print(t_d07_2021, 'daily means')
+
+//calculate mean for 10 day period
+var mean_t_d07_2021 = t_d07_2021.reduce('mean')
+//rename band to mean
+var mean_t_d07_2021 = mean_t_d07_2021.select(['mean_mean'],['mean'])
+//look up for results
+print(mean_t_d07_2021, '10 day mean')
 
 //define parametres for visualization
-var visTp = {
-  min: 0,
-  max: 100,
-  palette: ['#FFFFFF', '#00FFFF', '#0080FF', '#DA00FF', '#FFA400', '#FF0000']
+var visualization = {
+  bands: ['mean'],
+  min: -30.0,
+  max: 30.0,
+  palette: [
+    "#000080","#0000D9","#4000FF","#8000FF","#0080FF","#00FFFF",
+    "#00FF80","#80FF00","#DAFF00","#FFFF00","#FFF500","#FFDA00",
+    "#FFB000","#FFA400","#FF4F00","#FF2500","#FF0A00","#FF00FF",
+  ]
 };
 
-//add map
-Map.addLayer(
-    tp_2000_07, visTp, 'Daily total precipitation sums [mm]');
-    
+//add layer
+Map.addLayer(mean_t_d07_2021, visualization, "Air temperature [C] at 2m height");
+
+//download image
 Export.image.toDrive({
-  image: tp_2000_07, //var name to download
-  description: 'tp_2000_07', //file name
-  scale: 11132, 
+  image: mean_t_d07_2021, //var name to download
+  description: 'mean_t_d07_2021', //file name
+  scale: 11132, //scale
   region: geometry, //extent
   maxPixels:  805310068,
-});          
+});
