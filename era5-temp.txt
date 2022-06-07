@@ -1,0 +1,48 @@
+//define extent
+var geometry = 
+    /* color: #d63000 */
+    /* shown: false */
+    /* displayProperties: [
+      {
+        "type": "rectangle"
+      }
+    ] */
+    ee.Geometry.Polygon(
+        [[[12.928338010640598, 55.56069707955899],
+          [12.928338010640598, 48.086585414235735],
+          [26.287713010640598, 48.086585414235735],
+          [26.287713010640598, 55.56069707955899]]], null, false);
+          
+var startDate = ee.Date('2021-03-01') //start date
+var endDate = ee.Date('2021-03-11') //end date (+1 day)
+
+//define collection
+var dataset = ee.ImageCollection("ECMWF/ERA5_LAND/HOURLY") //define dataset
+                .filter(ee.Filter.date(startDate, endDate)) //filter by date
+                .select("total_precipitation_hourly") //define band/variable
+                //converse m to mm
+                .map(function (image) {
+  return image.multiply(1000)
+})
+                  
+//10 day sum
+var tp_2000_07 = dataset.sum(); 
+
+//define parametres for visualization
+var visTp = {
+  min: 0,
+  max: 100,
+  palette: ['#FFFFFF', '#00FFFF', '#0080FF', '#DA00FF', '#FFA400', '#FF0000']
+};
+
+//add map
+Map.addLayer(
+    tp_2000_07, visTp, 'Daily total precipitation sums [mm]');
+    
+Export.image.toDrive({
+  image: tp_2000_07, //var name to download
+  description: 'tp_2000_07', //file name
+  scale: 11132, 
+  region: geometry, //extent
+  maxPixels:  805310068,
+});          
